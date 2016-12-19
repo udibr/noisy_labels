@@ -289,9 +289,9 @@ if CNN:
     hidden_layers.add(MaxPooling2D(pool_size=(nb_pool, nb_pool)))
     hidden_layers.add(Dropout(0.25))
 
-    hidden_layers.add(Convolution2D(64, 3, 3, border_mode='same'))
+    hidden_layers.add(Convolution2D(nb_filters*2, 3, 3, border_mode='same'))
     hidden_layers.add(Activation('relu'))
-    hidden_layers.add(Convolution2D(64, 3, 3))
+    hidden_layers.add(Convolution2D(nb_filters*2, 3, 3))
     hidden_layers.add(Activation('relu'))
     hidden_layers.add(MaxPooling2D(pool_size=(2, 2)))
     hidden_layers.add(Dropout(0.25))
