@@ -6,7 +6,7 @@ import argparse
 # os.environ['THEANO_FLAGS'] = 'device=gpu0,floatX=float32,lib.cnmem=1'  # Use GPU
 # os.environ['THEANO_FLAGS'] = 'device=cpu,floatX=float32'  # Use CPU
 # import theano
-from keras.datasets import mnist
+from keras.datasets import mnist, cifar100
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, Activation, Flatten
 from keras.layers import Convolution2D, MaxPooling2D
@@ -22,6 +22,7 @@ from keras.callbacks import EarlyStopping
 from sklearn.cross_validation import StratifiedShuffleSplit
 import time
 from utils import load_weights
+from keras.optimizers import SGD
 
 parser = argparse.ArgumentParser(description='MNIST classifier with some of '
     'the training labels permuted by a fixed noise permutation. '
@@ -86,6 +87,9 @@ parser.add_argument('--stratify', action='store_false', default=True,
                     "number of times in training, noise, validation")
 parser.add_argument('--noise_levels', type=float, nargs='*',
                    help="Noise levels to check.")
+parser.add_argument('--dataset', type=str, default='mnist',
+                    choices=['mnist', 'cifar100'],
+                    help="What dataset to use.")
 
 args = parser.parse_args()
 
@@ -179,11 +183,15 @@ if BETA < 1 and MODEL == COMPLEX:
 batch_size = args.batch_size  # reduce this if your GPU runs out of memory
 nb_epoch = args.nb_epoch  # increase this if you think the model does not overfit
 
-nb_classes = 10  # number of categories we classify. MNIST is 10 digits
-# input image dimensions. In CNN we think we have a "color" image with 1 channel of color.
-# in MLP with flatten the pixels to img_rows*img_cols
-img_rows, img_cols = 28, 28
-
+if args.dataset=='mnist':
+    nb_classes = 10 # number of categories we classify. MNIST is 10 digits
+    # input image dimensions. In CNN we think we have a "color" image with 1 channel of color.
+    # in MLP with flatten the pixels to img_rows*img_cols
+    img_color, img_rows, img_cols = 1, 28, 28
+elif args.dataset=='cifar100':
+    nb_classes = 100
+    img_color, img_rows, img_cols = 3, 32, 32
+img_size = img_color*img_rows*img_cols
 if CNN:
     # number of convolutional filters to use
     nb_filters = 32
@@ -191,13 +199,16 @@ if CNN:
     nb_pool = 2
     # convolution kernel size
     nb_conv = 3
-    nhiddens = [128]
+    nhiddens = [512]
+    opt = 'adam' # SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+
     DROPOUT=0.5
     weight_decay = None
 else:
     nhiddens = [500, 300]
     DROPOUT=0.5
     weight_decay = None # 1e-4
+    opt='adam'
 
 # We train on MNIST data with some of the training labels permuted by a fixed
 # OR generate a random permutation (change seed to have something different) or
@@ -231,9 +242,16 @@ if isinstance(perm, basestring) and perm in ['weak','weak_hard','strong']:
         if CNN:
             weak_model.add(Convolution2D(nb_filters, nb_conv, nb_conv,
                                             border_mode='valid',
-                                            input_shape=(1, img_rows, img_cols)))
+                                            input_shape=(img_color, img_rows, img_cols)))
             weak_model.add(Activation('relu'))
             weak_model.add(Convolution2D(nb_filters, nb_conv, nb_conv))
+            weak_model.add(Activation('relu'))
+            weak_model.add(MaxPooling2D(pool_size=(nb_pool, nb_pool)))
+            weak_model.add(Dropout(0.25))
+
+            weak_model.add(Convolution2D(nb_filters*2, nb_conv, nb_conv, border_mode='same'))
+            weak_model.add(Activation('relu'))
+            weak_model.add(Convolution2D(nb_filters*2, nb_conv, nb_conv))
             weak_model.add(Activation('relu'))
             weak_model.add(MaxPooling2D(pool_size=(nb_pool, nb_pool)))
             weak_model.add(Dropout(0.25))
@@ -246,7 +264,7 @@ if isinstance(perm, basestring) and perm in ['weak','weak_hard','strong']:
         else:
             for i, nhidden in enumerate(nhiddens):
                 if i == 0:
-                    weak_model.add(Dense(nhidden, input_shape=(784,),
+                    weak_model.add(Dense(nhidden, input_shape=(img_size,),
                                             W_regularizer=regularizer))
                 else:
                     weak_model.add(Dense(nhidden, W_regularizer=regularizer))
@@ -255,8 +273,8 @@ if isinstance(perm, basestring) and perm in ['weak','weak_hard','strong']:
 
     weak_model.add(Dense(nb_classes, activation='softmax',
                          name='weak_dense',
-                         input_shape=(784,)))
-    weak_model.compile(loss='categorical_crossentropy', optimizer='adam')
+                         input_shape=(img_size,)))
+    weak_model.compile(loss='categorical_crossentropy', optimizer=opt)
     fname_weak_random_weights = '%s.%s.%s_random.hdf5' % (FN, experiment,perm)
     weak_model.save_weights(fname_weak_random_weights, overwrite=True)
 
@@ -264,11 +282,18 @@ hidden_layers = Sequential(name='hidden')
 if CNN:
     hidden_layers.add(Convolution2D(nb_filters, nb_conv, nb_conv,
                             border_mode='valid',
-                            input_shape=(1, img_rows, img_cols)))
+                            input_shape=(img_color, img_rows, img_cols)))
     hidden_layers.add(Activation('relu'))
     hidden_layers.add(Convolution2D(nb_filters, nb_conv, nb_conv))
     hidden_layers.add(Activation('relu'))
     hidden_layers.add(MaxPooling2D(pool_size=(nb_pool, nb_pool)))
+    hidden_layers.add(Dropout(0.25))
+
+    hidden_layers.add(Convolution2D(64, 3, 3, border_mode='same'))
+    hidden_layers.add(Activation('relu'))
+    hidden_layers.add(Convolution2D(64, 3, 3))
+    hidden_layers.add(Activation('relu'))
+    hidden_layers.add(MaxPooling2D(pool_size=(2, 2)))
     hidden_layers.add(Dropout(0.25))
 
     hidden_layers.add(Flatten())
@@ -279,7 +304,7 @@ if CNN:
 else:
     for i, nhidden in enumerate(nhiddens):
         if i == 0:
-            hidden_layers.add(Dense(nhidden, input_shape=(784,), W_regularizer=regularizer))
+            hidden_layers.add(Dense(nhidden, input_shape=(img_size,), W_regularizer=regularizer))
         else:
             hidden_layers.add(Dense(nhidden, W_regularizer=regularizer))
         hidden_layers.add(Activation('relu'))
@@ -309,9 +334,9 @@ else:
                                            for j in range(nb_classes)])
                                  for i in range(nb_classes)])
 if CNN:
-    inputs = Input(shape=(1,img_rows,img_cols))
+    inputs = Input(shape=(img_color,img_rows,img_cols))
 else:
-    inputs = Input(shape=(img_rows*img_cols,))
+    inputs = Input(shape=(img_color*img_rows*img_cols,))
 if MODEL == SIMPLE:
     # we need an input of constant=1 to derive the simple channel matrix from a regular softmax dense layer
     ones = Input(shape=(1,))
@@ -370,12 +395,12 @@ train_inputs = [inputs,ones] if MODEL == SIMPLE else inputs
 if BETA==1:
     model = Model(input=train_inputs, output=baseline_output)
     model.compile(loss='categorical_crossentropy',
-                  optimizer='adam', # SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True),  # adam
+                  optimizer=opt,
                   metrics=['accuracy'])
 else:
     model = Model(input=train_inputs, output=[channeled_output, baseline_output])
     model.compile(loss=[loss, 'categorical_crossentropy'],loss_weights=[1.-BETA,BETA],
-                  optimizer='adam', # SGD(lr=0.001, momentum=0.99, decay=0.0, nesterov=True),  # adam
+                  optimizer=opt,
                   metrics=['accuracy'])
 
 
@@ -388,10 +413,14 @@ model.save_weights(fname_random_weights, overwrite=True)
 # Data:
 # keras has a built in tool that download the MNIST data set for you to `~/.keras/datasets/`
 # the data, shuffled and split between train and test sets
-(X_train, y_train), (X_test, y_test) = mnist.load_data()
-print('MNIST training data set label distribution', np.bincount(y_train))
-print('test distribution', np.bincount(y_test))
-
+if args.dataset == 'mnist':
+    (X_train, y_train), (X_test, y_test) = mnist.load_data()
+    print('MNIST training data set label distribution', np.bincount(y_train))
+    print('test distribution', np.bincount(y_test))
+else:
+    (X_train, y_train), (X_test, y_test) = cifar100.load_data(label_mode='fine')
+    y_train = y_train.ravel()
+    y_test = y_test.ravel()
 
 STRATIFY=args.stratify
 if STRATIFY:
@@ -417,11 +446,11 @@ else:
         print('label distribution after downsampling', np.bincount(y_train))
 
 if CNN:
-    X_train = X_train.reshape(X_train.shape[0], 1, img_rows, img_cols)
-    X_test = X_test.reshape(X_test.shape[0], 1, img_rows, img_cols)
+    X_train = X_train.reshape(X_train.shape[0], img_color, img_rows, img_cols)
+    X_test = X_test.reshape(X_test.shape[0], img_color, img_rows, img_cols)
 else:
-    X_train = X_train.reshape(X_train.shape[0], 784)
-    X_test = X_test.reshape(X_test.shape[0], 784)
+    X_train = X_train.reshape(X_train.shape[0], img_size)
+    X_test = X_test.reshape(X_test.shape[0], img_size)
     
 X_train = X_train.astype('float32')
 X_test = X_test.astype('float32')
@@ -461,7 +490,11 @@ def fix_output(y):
 if isinstance(perm, basestring):
     experiment += '-' + perm + '_%d' % seed
 else:
-    experiment += '-'+''.join(map(str,perm)) + '_%d'%seed
+    if nb_classes <= 10:
+        experiment += '-'+''.join(map(str,perm)) + '_%d'%seed
+    else:
+        experiment += '-random_%d'%seed
+
 
 experiment += '_%g'%(DOWN_SAMPLE*10)
 if STRATIFY:
@@ -522,7 +555,9 @@ for noise_level in tqdm(noise_levels):
     np.random.seed(seed)  # for reproducibility
 
     # replace some of the training labels with permuted (noise) labels.
-    if STRATIFY:
+    if noise_level <= 0:
+        noise_idx = []
+    elif STRATIFY:
         # make sure each categories receive an equal amount of noise
         _, noise_idx = next(iter(StratifiedShuffleSplit(y_train, n_iter=1,
                                                         test_size=noise_level,
@@ -567,22 +602,13 @@ for noise_level in tqdm(noise_levels):
         #  noise (permutation and level of noise)
         if PRETRAIN > 1:
             baseline_experiment = '-'.join(['S'+experiment.split('-')[0][1]+'p',experiment.split('-')[1]])
-            lookup = {'dense_class0_W': 'dense_class0_b',
-                      'dense_class1_W': 'dense_class1_b',
-                      'dense_class2_W': 'dense_class2_b',
-                      'dense_class3_W': 'dense_class3_b',
-                      'dense_class4_W': 'dense_class4_b',
-                      'dense_class5_W': 'dense_class5_b',
-                      'dense_class6_W': 'dense_class6_b',
-                      'dense_class7_W': 'dense_class7_b',
-                      'dense_class8_W': 'dense_class8_b',
-                      'dense_class9_W': 'dense_class9_b'}
-            ignore = ['dense_class0_W', 'dense_class1_W',
-                      'dense_class2_W', 'dense_class3_W',
-                      'dense_class4_W', 'dense_class5_W',
-                      'dense_class6_W', 'dense_class7_W',
-                      'dense_class8_W', 'dense_class9_W',
-                      ]
+
+            lookup = {}
+            ignore = []
+            for i in range(nb_classes):
+                k = 'dense_class%d_W'%i
+                lookup[k] = 'dense_class%d_b'%i
+                ignore.append(k)
         else:
             baseline_experiment = '-'.join(['B'+experiment.split('-')[0][1],experiment.split('-')[1]])
             lookup = {}
