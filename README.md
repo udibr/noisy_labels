@@ -6,4 +6,5 @@ TRAINING DEEP NEURAL-NETWORKS USING A NOISE ADAPTATION LAYER
 
 Learning MNIST when almost half the labels are permuted in a fixed way. For example, when the task of labeling is split between two people that don’t agree.
 
-Follow [161103-run-plot](./161103-run-plot.ipynb) notebook for how to run the code.
+Follow [170212-mnist-simple](./170212-mnist-simple.ipynb) notebook for an example of how to implement the Simple noise adaption layer in the paper with a single customized Keras layer.
+Follow [161103-run-plot](./161103-run-plot.ipynb), [161202-run-plot-cifar100](./161202-run-plot-cifar100.ipynb) and [161230-run-plot-cifar100-sparse](./161230-run-plot-cifar100-sparse.ipynb) notebooks for how to reproduce the results of the paper.
